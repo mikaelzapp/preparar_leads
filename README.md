@@ -8,6 +8,8 @@ Aplicativo **local** para importar dados empresariais de CSV, consolidar por CNP
 
 [**Baixar código-fonte ZIP do GitHub**](https://github.com/mikaelzapp/preparar_leads/archive/refs/heads/main.zip)
 
+O ZIP deste link contém **o código do programa**, não seus leads. Para baixar os **CSVs processados**, abra o programa e use **Exportar → Gerar CSVs → Baixar pacote ZIP de leads**.
+
 Não publique dados de clientes, base CSV, banco SQLite, ou chaves de API nesse repositório público. A pasta `data/` e arquivos `.csv`/`.sqlite` são ignorados pelo Git.
 
 ## Instalação Windows 11
@@ -36,7 +38,8 @@ A aplicação não precisa de contas de nuvem para importar, editar mensagens ou
 - **Mensagens:** modelos editáveis por segmento com variáveis como `{empresa}`, `{primeiro_nome}`, `{meu_nome}`; gestão por empresa no CRM.
 - **WhatsApp:** o `wa.me` **não envia** mensagens; apenas abre uma conversa com texto preenchido. O link tampouco confirma a existência de conta no serviço.
 - **Não contatar:** contatos marcados como bloqueados não recebem link de WhatsApp na exportação.
-- **Exportação:** `data/exports/leads_sc.csv` e botão de download na interface; CSV com UTF-8 BOM e ponto e vírgula para Excel brasileiro.
+- **Exportação:** `data/exports/leads_sc.csv` e `data/exports/leads_prioridade_a.csv` (score cadastral 80+), disponíveis para download individual ou em `Leads_SC_exportados.zip` **gerado localmente na tela Exportar**. Os CSVs usam UTF-8 BOM e ponto e vírgula para Excel brasileiro.
+- **Proteções:** status `NAO_CONTATAR` sempre bloqueia o link, números confirmados inativos não têm prioridade sobre outros utilizáveis, e o exportador neutraliza textos que poderiam ser interpretados como fórmulas no Excel.
 
 ## Interface
 
