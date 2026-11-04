@@ -108,3 +108,66 @@ def test_template_can_be_customized(db,tmp_path):
     template = dict(db.execute('SELECT * FROM templates WHERE name=?', ('Personalizada',)).fetchone())
     row = lead_row(db,'11222333000181',template=template)
     assert row['mensagem_personalizada'].startswith('Oi Ana,')
+
+
+def test_nao_contatar_status_alone_blocks_whatsapp(db, tmp_path):
+    source = tmp_path / 'dados_sc.csv'
+    make_csv(source)
+    import_csv(db, source)
+    update_crm(db, '11222333000181', 'NAO_CONTATAR', 'solicitou exclusão', block=False)
+    lead = lead_row(db, '11222333000181')
+    assert lead['nao_contatar'] == 1
+    assert lead['link_whatsapp'] == ''
+
+
+def test_inactive_phone_does_not_hide_other_usable_number(db, tmp_path):
+    source = tmp_path / 'dados_sc.csv'
+    make_csv(source)
+    import_csv(db, source)
+    contacts = company_detail(db, '11222333000181')['contacts']
+    mobile = next(c for c in contacts if c['kind'] == 'PHONE' and '99999' in c['original'])
+    update_contact(db, mobile['id'], 'CONFIRMADO_MANUALMENTE',
+                   'Registro de verificação manual', 'INATIVO_CONFIRMADO')
+    lead = lead_row(db, '11222333000181')
+    assert lead['telefone'].endswith('33334444')
+    assert lead['link_whatsapp']
+
+
+def test_manual_confirmation_requires_independent_source(db, tmp_path):
+    source = tmp_path / 'dados_sc.csv'
+    make_csv(source)
+    import_csv(db, source)
+    contact = company_detail(db, '11222333000181')['contacts'][0]
+    with pytest.raises(ValueError, match='evidência'):
+        update_contact(db, contact['id'], 'CONFIRMADO_MANUALMENTE', 'CSV_IMPORTADO')
+    with pytest.raises(ValueError, match='evidência'):
+        update_contact(db, contact['id'], 'NAO_VERIFICADO', '', 'CONFIRMADO_MANUALMENTE')
+
+
+def test_empty_filtered_export_retains_full_header(db, tmp_path):
+    source = tmp_path / 'dados_sc.csv'
+    make_csv(source)
+    import_csv(db, source)
+    output = tmp_path / 'filtered.csv'
+    assert export_csv(db, output, min_score=100) == 0
+    with output.open(encoding='utf-8-sig', newline='') as file:
+        rows = list(csv.DictReader(file, delimiter=';'))
+        assert rows == []
+        file.seek(0)
+        header = file.readline()
+    assert 'socios' in header
+    assert 'mensagem_personalizada' in header
+
+
+def test_export_quotes_excel_formula_cells(db, tmp_path):
+    source = tmp_path / 'dados_sc.csv'
+    make_csv(source)
+    import_csv(db, source)
+    db.execute('UPDATE companies SET nome_fantasia=? WHERE cnpj=?',
+               ('=SOMA(1;2)', '11222333000181'))
+    db.commit()
+    output = tmp_path / 'safe.csv'
+    assert export_csv(db, output) == 1
+    with output.open(encoding='utf-8-sig', newline='') as file:
+        row = next(csv.DictReader(file, delimiter=';'))
+    assert row['nome_fantasia'].startswith("'=")
