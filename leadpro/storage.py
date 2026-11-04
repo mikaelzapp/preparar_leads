@@ -180,10 +180,21 @@ def company_detail(db: sqlite3.Connection, cnpj: str) -> dict:
 
 def _best_contact(contacts: list[dict], kind: str) -> dict:
     options = [x for x in contacts if x['kind'] == kind]
-    options.sort(key=lambda x: (
-        x['link_status'] == 'CONFIRMADO_MANUALMENTE',
-        x['format_status'] in ('FORMATO_VALIDO','SINTAXE_VALIDA','FORMATO_PLAUSIVEL','SINTAXE_PLAUSIVEL'),
-        x['normalized'] != ''), reverse=True)
+    acceptable = (('FORMATO_VALIDO', 'FORMATO_PLAUSIVEL') if kind == 'PHONE'
+                  else ('SINTAXE_VALIDA', 'SINTAXE_PLAUSIVEL'))
+
+    def usable(item: dict) -> bool:
+        return (bool(item['normalized']) and item['format_status'] in acceptable
+                and item['link_status'] not in ('INVALIDO', 'CONFLITANTE')
+                and item['activity_status'] != 'INATIVO_CONFIRMADO')
+
+    # Um contato confirmado como inativo ou conflitante nunca deve ganhar
+    # prioridade sobre um contato com formato válido, ainda não verificado.
+    options.sort(key=lambda item: (
+        usable(item),
+        item['link_status'] == 'CONFIRMADO_MANUALMENTE',
+        item['format_status'] in acceptable,
+        bool(item['normalized'])), reverse=True)
     return options[0] if options else {}
 
 
@@ -207,7 +218,7 @@ def lead_row(db: sqlite3.Connection, cnpj: str, template: dict | None = None,
     score = lead_score(phone.get('format_status',''),phone.get('link_status',''),
                        email.get('format_status',''),email.get('link_status',''),
                        email.get('mx_status',''),data.get('website',''))
-    eligible = (not data['do_not_contact'] and
+    eligible = (not data['do_not_contact'] and data['status'] != 'NAO_CONTATAR' and
                 phone.get('format_status') in ('FORMATO_VALIDO','FORMATO_PLAUSIVEL') and
                 phone.get('link_status') not in ('INVALIDO', 'CONFLITANTE') and
                 phone.get('activity_status') != 'INATIVO_CONFIRMADO')
@@ -248,6 +259,24 @@ def list_companies(db: sqlite3.Connection, search: str = '', segment: str = 'Tod
     return [dict(r) for r in db.execute(query, args)]
 
 
+EXPORT_COLUMNS = (
+    'cnpj', 'cnpj_valido', 'razao_social', 'nome_fantasia', 'socios',
+    'socio_destinatario', 'municipio', 'uf', 'segmento', 'cnae_principal',
+    'telefone', 'telefone_status', 'telefone_vinculo', 'telefone_atividade',
+    'telefone_fonte', 'email', 'email_status', 'email_vinculo', 'email_mx',
+    'site', 'score_cadastral', 'prioridade', 'modelo_mensagem',
+    'mensagem_personalizada', 'link_whatsapp', 'status_contato',
+    'nao_contatar', 'ultima_abordagem', 'observacoes'
+)
+
+
+def _safe_csv_cell(value: object) -> object:
+    """Evita que texto externo seja executado como fórmula ao abrir no Excel."""
+    if isinstance(value, str) and value.lstrip().startswith(('=', '+', '-', '@')):
+        return "'" + value
+    return value
+
+
 def export_csv(db: sqlite3.Connection, filepath: str | Path, min_score: int = 0,
                segment: str = 'Todos', sender: str = 'Mikael', business: str = '') -> int:
     path = Path(filepath)
@@ -255,20 +284,14 @@ def export_csv(db: sqlite3.Connection, filepath: str | Path, min_score: int = 0,
     cursor = db.execute('SELECT cnpj FROM companies ORDER BY razao_social,cnpj')
     count = 0
     with path.open('w', newline='', encoding='utf-8-sig') as file:
-        writer = None
+        writer = csv.DictWriter(file, fieldnames=EXPORT_COLUMNS, delimiter=';', extrasaction='ignore')
+        writer.writeheader()
         for item in cursor:
             lead = lead_row(db, item['cnpj'], sender=sender, business=business)
             if lead['score_cadastral'] < min_score or (segment != 'Todos' and lead['segmento'] != segment):
                 continue
-            if writer is None:
-                writer = csv.DictWriter(file, fieldnames=list(lead.keys()), delimiter=';', extrasaction='ignore')
-                writer.writeheader()
-            writer.writerow(lead)
+            writer.writerow({key: _safe_csv_cell(value) for key, value in lead.items()})
             count += 1
-        if writer is None:
-            # Exportação vazia ainda precisa ter cabeçalho.
-            writer = csv.writer(file, delimiter=';')
-            writer.writerow(['cnpj', 'razao_social', 'link_whatsapp'])
     return count
 
 
@@ -289,7 +312,7 @@ def update_crm(db: sqlite3.Connection, cnpj: str, status: str, note: str,
     stamp = datetime.now(timezone.utc).isoformat(timespec='seconds') if contacted else ''
     db.execute('''UPDATE crm SET status=?,note=?,recipient=?,template_id=?,do_not_contact=?,
                 contacted_at=CASE WHEN ? != '' THEN ? ELSE contacted_at END WHERE cnpj=?''',
-               (status, note, recipient, template_id, int(block), stamp, stamp, cnpj))
+               (status, note, recipient, template_id, int(block or status == 'NAO_CONTATAR'), stamp, stamp, cnpj))
     db.commit()
 
 
@@ -299,6 +322,9 @@ def update_contact(db: sqlite3.Connection, contact_id: int, link_status: str,
     allowed = {'NAO_VERIFICADO','CONFIRMADO_MANUALMENTE','CONFLITANTE','INVALIDO'}
     if link_status not in allowed or activity_status not in {'NAO_VERIFICADO','CONFIRMADO_MANUALMENTE','INATIVO_CONFIRMADO'}:
         raise ValueError('Verificação inválida')
+    if ('CONFIRMADO_MANUALMENTE' in (link_status, activity_status)
+            and source.strip().upper() in ('', 'CSV_IMPORTADO')):
+        raise ValueError('Confirmação manual exige evidência independente da planilha.')
     stamp = datetime.now(timezone.utc).isoformat(timespec='seconds')
     db.execute('''UPDATE contacts SET link_status=?,source=?,activity_status=?,
                 mx_status=COALESCE(?,mx_status),checked_at=? WHERE id=?''',
