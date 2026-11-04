@@ -1,0 +1,5 @@
+streamlit>=1.38,<2
+phonenumbers>=9,<10
+email-validator>=2,<3
+dnspython>=2.6,<3
+pytest>=8,<10
