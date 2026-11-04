@@ -1,7 +1,9 @@
 """Interface local Streamlit do Lead Intelligence Pro."""
 from __future__ import annotations
 
+from io import BytesIO
 from pathlib import Path
+from zipfile import ZIP_DEFLATED, ZipFile
 
 import streamlit as st
 
@@ -165,10 +167,26 @@ elif screen == 'Exportar':
     segment = st.selectbox('Segmento', ['Todos','Advocacia','Imobiliária','Cobrança','Outros'])
     score = st.slider('Score cadastral mínimo', 0, 100, 0, 5)
     destination = DATA / 'exports' / 'leads_sc.csv'
-    if st.button('Gerar CSV', type='primary'):
-        with st.spinner('Gerando arquivo...'):
+    priority_a = DATA / 'exports' / 'leads_prioridade_a.csv'
+    if st.button('Gerar CSVs', type='primary'):
+        with st.spinner('Gerando arquivos...'):
             count = export_csv(db, destination, min_score=score, segment=segment, sender=sender, business=business)
-        st.success(f'{count} empresas exportadas.')
+            count_a = export_csv(db, priority_a, min_score=max(score, 80), segment=segment,
+                                 sender=sender, business=business)
+        st.success(f'{count} empresas exportadas; {count_a} com score cadastral A (80+).')
     if destination.is_file():
-        st.download_button('Baixar leads_sc.csv', destination.read_bytes(), file_name='leads_sc.csv', mime='text/csv')
+        st.download_button('Baixar leads_sc.csv', destination.read_bytes(),
+                           file_name='leads_sc.csv', mime='text/csv')
+        if priority_a.is_file():
+            buffer = BytesIO()
+            with ZipFile(buffer, 'w', compression=ZIP_DEFLATED) as archive:
+                archive.write(destination, arcname='leads_sc.csv')
+                archive.write(priority_a, arcname='leads_prioridade_a.csv')
+                archive.writestr('LEIA-ME.txt',
+                    'Arquivos gerados LOCALMENTE no Lead Intelligence Pro.\\n'
+                    'Prioridade A = score cadastral >= 80; não é garantia de interesse comercial.\\n'
+                    'Números não verificados não são confirmados; wa.me não envia mensagens.\\n'
+                    'Não publique estes CSVs em repositórios públicos.\\n')
+            st.download_button('Baixar pacote ZIP de leads', buffer.getvalue(),
+                               file_name='Leads_SC_exportados.zip', mime='application/zip')
     st.warning('Os links do WhatsApp apenas preenchem o texto. Os registros não confirmados continuam sinalizados como não verificados.')
